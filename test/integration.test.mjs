@@ -76,5 +76,11 @@ globalThis.fetch = async (input, options) => {
     assert.equal(await readFile(join(dir, 'push-count.txt'), 'utf8'), 'accepted\n');
     const state = JSON.parse(await readFile(join(dir, 'data', 'state.json'), 'utf8'));
     assert.equal(state.reports['weekly-2026-11-02'].status, 'accepted');
+    run('resend');
+    assert.equal(await readFile(join(dir, 'push-count.txt'), 'utf8'), 'accepted\naccepted\n');
+    const resent = JSON.parse(await readFile(join(dir, 'data', 'state.json'), 'utf8'));
+    assert.ok(resent.reports['weekly-2026-11-02'].lastResentAt);
+    run('send');
+    assert.equal(await readFile(join(dir, 'push-count.txt'), 'utf8'), 'accepted\naccepted\n');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

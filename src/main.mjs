@@ -191,22 +191,28 @@ async function preview() {
   console.log(`已生成 ${entries.length} 份卡片报告和归档首页。`);
 }
 
-async function send(test = false) {
+async function send(test = false, resend = false) {
   const repository = process.env.GITHUB_REPOSITORY;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository || '')) throw new Error('缺少合法的 GITHUB_REPOSITORY');
   const branch = process.env.GITHUB_REF_NAME || 'main';
   const statePath = join(data, 'state.json');
   const state = await readJSON(statePath, { reports: {} });
-  const pending = Object.entries(state.reports).filter(([, r]) => r.status === 'pending').sort(([a], [b]) => b.localeCompare(a));
+  const pending = resend ? Object.entries(state.reports).sort((a, b) => b[1].end.localeCompare(a[1].end) || b[0].localeCompare(a[0])).slice(0, 1) :
+    Object.entries(state.reports).filter(([, r]) => r.status === 'pending').sort(([a], [b]) => b.localeCompare(a));
   // Bound the free-tier usage. One request/day, combining weekly/monthly catch-up links.
   const ledgerPath = join(data, 'delivery.json');
   const ledger = await readJSON(ledgerPath, {});
-  if (!test && (ledger[today] || !pending.length)) { console.log('今日无需推送。'); return; }
+  if (!test && ((!resend && ledger[today]) || !pending.length)) { console.log('今日无需推送。'); return; }
   const key = process.env.SERVERCHAN_SENDKEY;
   if (!key || !/^SCT[A-Za-z0-9]+$/.test(key)) throw new Error('请在 Secrets 配置 Server酱 Turbo 的 SERVERCHAN_SENDKEY（SCT 开头）');
   const url = path => `https://github.com/${repository}/blob/${encodeURIComponent(branch)}/${path}`;
   const base = config.publicBaseUrl?.replace(/\/$/, '');
   if (base && !/^https:\/\/[-a-zA-Z0-9.]+(?:\/[-a-zA-Z0-9._~%]+)*$/.test(base)) throw new Error('publicBaseUrl 必须为合法 HTTPS 地址');
+  if (resend && base) {
+    const page = await fetch(`${base}/${pending[0][0]}.html`, { signal: AbortSignal.timeout(15000) });
+    if (!page.ok) throw new Error('卡片预览尚未可访问，停止补发，避免发送失效入口');
+    await page.body?.cancel();
+  }
   const labels = pending.map(([id, r]) => periodLabel(reportPeriod(id, r)));
   const title = pending.length === 1 ? `GitHub 雷达｜${labels[0]}` : `GitHub 雷达｜${pending.length} 份报告｜截至 ${today}`;
   const body = test ? `微信推送连接测试成功。\n\n[查看项目](${url('README.md')})` :
@@ -225,7 +231,11 @@ async function send(test = false) {
   const result = await response.json();
   if (result.code !== 0) throw new Error('推送服务未接受请求，请检查控制台配置和额度');
   if (!test) {
-    for (const [, r] of pending) { r.status = 'accepted'; r.acceptedAt = new Date().toISOString(); }
+    for (const [, r] of pending) {
+      r.status = 'accepted';
+      if (resend) r.lastResentAt = new Date().toISOString();
+      else r.acceptedAt = new Date().toISOString();
+    }
     ledger[today] = new Date().toISOString();
     await save(statePath, state); await save(ledgerPath, ledger);
   }
@@ -237,8 +247,9 @@ try {
   else if (phase === 'report') await report();
   else if (phase === 'preview') await preview();
   else if (phase === 'send') await send();
+  else if (phase === 'resend') await send(false, true);
   else if (phase === 'test-push') await send(true);
-  else throw new Error('未知命令，支持 collect / report / preview / send / test-push');
+  else throw new Error('未知命令，支持 collect / report / preview / send / resend / test-push');
 } catch (error) {
   // Never log native fetch errors, which may include the secret-bearing URL.
   console.error(error.message?.includes('SCT') ? '请检查 SERVERCHAN_SENDKEY 的 Secrets 配置（Turbo SCT 类型）' : error.message);

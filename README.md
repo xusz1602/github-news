@@ -4,6 +4,8 @@
 
 首次启用预览：仓库 **Settings → Pages → Build and deployment → Source → GitHub Actions**。`Publish Card Reports` 工作流会构建静态网页、补充 README 并部署到 GitHub Pages，无需购买域名或维护服务器。如首次部署在设置前失败，配置完成后手动重新运行该工作流。
 
+更新网页不会改变已经发送到微信的旧链接。如需补发最新卡片入口，手动运行 `Resend Latest Card Report` 工作流；它会检查网页可访问后发送一次，明确绕过正常每日去重并保存补发回执。补发也消耗推送服务免费条数，请勿反复点击。
+
 周报日期显示周一至周日，月报显示自然月第一天至最后一天；实际增长仍按下一边界日采样值计算。即时榜单显示“截至 YYYY-MM-DD 采样”。README 短节选保留项目原文，每个项目最多约 24 个词；完整说明请通过卡片来源链接查看。
 
 每天采集 GitHub Star 快照，每周／每月生成四张 Top 10 榜单，通过 Server酱 Turbo 免费通道通知个人微信。无需服务器或付费 AI API。
