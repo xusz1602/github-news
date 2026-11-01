@@ -58,7 +58,7 @@ export function plain(value) {
   return String(value || '').replace(/[\r\n]+/g, ' ').replace(/[\\`*_{}\[\]<>#|!]/g, '\\$&').slice(0, 600);
 }
 
-export function render(period, end, start, config) {
+export function render(period, end, start, config, excerpts = {}) {
   const boards = rank(end, start, config);
   const lines = [`# GitHub 项目${period.kind} · ${period.end}`, '',
     `周期日期：${period.start} 至 ${period.end}（${config.timezone}）。`,
@@ -75,6 +75,7 @@ export function render(period, end, start, config) {
         `⭐ ${r.stars.toLocaleString('en-US')}${r.delta !== undefined ? ` ｜净增 +${r.delta.toLocaleString('en-US')} ｜增长率 ${r.rate === null ? '基数为 0' : (r.rate * 100).toFixed(1) + '%'}` : ''}`,
         `语言：${plain(r.language || '未标注')}${r.embedded ? ` ｜分类：${tags(r).join(' / ')}` : ''}${r.fork ? ' ｜Fork/BSP 分支' : ''}`, '',
         plain(r.description || '项目未提供简介，请查看仓库。'), '',
+        ...(excerpts[r.id]?.excerpt ? ['**README 概述 · 原文节选**', '', `> ${plain(excerpts[r.id].excerpt)}`, '', `[阅读完整 README](https://github.com/${r.full_name}#readme)`, ''] : []),
         `最近代码推送：${r.pushed_at || '未知'}（不等同于本周期发布新版本）。`, '');
     });
   }

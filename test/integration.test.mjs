@@ -32,6 +32,9 @@ globalThis.fetch = async (input, options) => {
     return new Response('{}', { status: 403, headers: { 'retry-after': '3600' } });
   }
   if (url.hostname === 'sctapi.ftqq.com') {
+    const text = options.body.get('desp');
+    const title = options.body.get('title');
+    if (!text.includes('2026-10-26 — 2026-11-01') || !title.includes('周报')) throw new Error('通知缺少报告周期');
     appendFileSync(${JSON.stringify(join(dir, 'push-count.txt'))}, 'accepted\\n');
     return Response.json({code:0});
   }

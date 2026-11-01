@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile, rename, readdir, unlink } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dateAt, periods, shift, render } from './core.mjs';
+import { dateAt, periods, shift, render, rank } from './core.mjs';
+import { reportPeriod, periodLabel, readmeExcerpt, renderHTML, renderIndex } from './presentation.mjs';
 import { setTimeout as watchdogTimeout } from 'node:timers';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -145,10 +146,49 @@ async function report() {
     const start = await readJSON(join(snapshots, `${period.start}.json`), null);
     const path = `${period.id}.md`;
     await writeFile(join(reports, path), render(period, end, start, config));
-    state.reports[period.id] = { path, title: `GitHub ${period.kind} ${period.end}`, end: period.end, status: 'pending' };
+    state.reports[period.id] = { path, title: `GitHub ${period.kind} ${period.end}`, start: period.start, kind: period.kind, end: period.end, status: 'pending' };
   }
   await save(statePath, state);
   console.log('报告生成完成。');
+}
+
+async function preview() {
+  const state = await readJSON(join(data, 'state.json'), { reports: {} });
+  const cachePath = join(data, 'readme-excerpts.json');
+  const cache = await readJSON(cachePath, {});
+  const docs = join(root, 'docs');
+  await mkdir(docs, { recursive: true });
+  const entries = [], attempted = new Set();
+  for (const [id, r] of Object.entries(state.reports)) {
+    const period = reportPeriod(id, r);
+    const end = await readJSON(join(snapshots, `${period.end}.json`), null);
+    if (!end) continue;
+    const start = period.kind === '即时榜单' ? null : await readJSON(join(snapshots, `${period.start}.json`), null);
+    const projects = new Map(rank(end, start, config).flatMap(b => b.rows).map(repo => [repo.id, repo]));
+    for (const repo of projects.values()) {
+      if (attempted.has(repo.id)) continue;
+      attempted.add(repo.id);
+      if (cache[repo.id]?.fetchedAt && Date.now() - Date.parse(cache[repo.id].fetchedAt) < 30 * 86400000) continue;
+      progress(`补充 README：${repo.full_name}`);
+      try {
+        const response = await fetch(`https://api.github.com/repos/${repo.full_name}/readme`, {
+          headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'github-embedded-radar', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!response.ok) { progress(`README HTTP ${response.status}：保留已有简介并提供原文入口`); continue; }
+        const value = await response.json();
+        if (value.encoding !== 'base64' || !value.content) continue;
+        cache[repo.id] = { excerpt: readmeExcerpt(Buffer.from(value.content, 'base64').toString('utf8')), fetchedAt: new Date().toISOString(), repository: repo.full_name };
+      } catch { progress('README 暂时无法读取：保留原文入口，不影响榜单发布'); }
+    }
+    await writeFile(join(docs, `${id}.html`), renderHTML(period, end, start, config, cache));
+    await writeFile(join(reports, r.path), render(period, end, start, config, cache));
+    entries.push({ period });
+  }
+  await writeFile(join(docs, 'index.html'), renderIndex(entries));
+  await writeFile(join(docs, '.nojekyll'), '');
+  await save(cachePath, cache);
+  console.log(`已生成 ${entries.length} 份卡片报告和归档首页。`);
 }
 
 async function send(test = false) {
@@ -165,14 +205,21 @@ async function send(test = false) {
   const key = process.env.SERVERCHAN_SENDKEY;
   if (!key || !/^SCT[A-Za-z0-9]+$/.test(key)) throw new Error('请在 Secrets 配置 Server酱 Turbo 的 SERVERCHAN_SENDKEY（SCT 开头）');
   const url = path => `https://github.com/${repository}/blob/${encodeURIComponent(branch)}/${path}`;
+  const base = config.publicBaseUrl?.replace(/\/$/, '');
+  if (base && !/^https:\/\/[-a-zA-Z0-9.]+(?:\/[-a-zA-Z0-9._~%]+)*$/.test(base)) throw new Error('publicBaseUrl 必须为合法 HTTPS 地址');
+  const labels = pending.map(([id, r]) => periodLabel(reportPeriod(id, r)));
+  const title = pending.length === 1 ? `GitHub 雷达｜${labels[0]}` : `GitHub 雷达｜${pending.length} 份报告｜截至 ${today}`;
   const body = test ? `微信推送连接测试成功。\n\n[查看项目](${url('README.md')})` :
-    ['已生成 GitHub 排行报告，包含全站高星、增长、嵌入式高星与增长榜。', '',
-      ...pending.slice(0, 8).map(([, r]) => `- [${r.title}](${url(`reports/${r.path}`)})`), '',
-      `[查看全部历史报告](${url('reports')})`, '', '嵌入式范围包含 MCU、RTOS、Linux、全志、Rockchip 等。完整报告保存在 GitHub，微信通知正文保留时间受推送服务限制。'].join('\n');
+    ['## 本次报告周期', '', ...labels.map(label => `- **${label}**`), '',
+      '项目卡片包含 Star 数据、项目简介、README 概述及来源。', '',
+      ...pending.slice(0, 8).flatMap(([id, r], i) => [base ? `### [${labels[i]} · 卡片预览](${base}/${id}.html)` : `### ${labels[i]}`,
+        `[Markdown 备份](${url(`reports/${r.path}`)})`, '']),
+      `[查看全部历史报告](${base ? base + '/index.html' : url('reports')})`, '',
+      '周报/月报日期表示自然周期，数值以边界日实际采样为准。即时榜单仅展示截至采样日的数据；不足完整周期时不显示增长排名。'].join('\n');
   let response;
   try {
     response = await fetch(`https://sctapi.ftqq.com/${key}.send`, { method: 'POST',
-      body: new URLSearchParams({ title: test ? 'GitHub 雷达 · 微信连接测试' : `GitHub 雷达 · ${pending.length} 份报告已更新`, desp: body }), signal: AbortSignal.timeout(30000) });
+      body: new URLSearchParams({ title: test ? 'GitHub 雷达 · 微信连接测试' : title, desp: body }), signal: AbortSignal.timeout(30000) });
   } catch { throw new Error('推送网络失败：为避免重复投递，本次不立即重试，下次定时运行再检查'); }
   if (!response.ok) throw new Error(`推送 HTTP ${response.status}；未记录含密钥的请求地址`);
   const result = await response.json();
@@ -188,9 +235,10 @@ async function send(test = false) {
 try {
   if (phase === 'collect') { await collect(); await report(); }
   else if (phase === 'report') await report();
+  else if (phase === 'preview') await preview();
   else if (phase === 'send') await send();
   else if (phase === 'test-push') await send(true);
-  else throw new Error('未知命令，支持 collect / report / send / test-push');
+  else throw new Error('未知命令，支持 collect / report / preview / send / test-push');
 } catch (error) {
   // Never log native fetch errors, which may include the secret-bearing URL.
   console.error(error.message?.includes('SCT') ? '请检查 SERVERCHAN_SENDKEY 的 Secrets 配置（Turbo SCT 类型）' : error.message);

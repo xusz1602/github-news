@@ -1,5 +1,7 @@
 {
   "timezone": "Asia/Shanghai",
+  "repository": "xusz1602/github-news",
+  "publicBaseUrl": "https://xusz1602.github.io/github-news",
   "top": 10,
   "globalPages": 10,
   "embeddedPages": 2,
