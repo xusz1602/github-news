@@ -22,11 +22,16 @@ export function readmeExcerpt(markdown) {
   let text = String(markdown || '').slice(0, 150000)
     .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, '\n')
     .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<nav\b[^>]*>[\s\S]*?<\/nav>/gi, '')
+    .replace(/<p\b[^>]*>[\s\S]*?<\/p>/gi, p => (p.match(/<a\b/gi) || []).length >= 3 ? '\n' : p)
+    .replace(/^.*(?:&nbsp;.*){3,}.*$/gm, '')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/<[^>]*>/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1');
+    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&apos;|&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => Number(n) <= 0x10ffff ? String.fromCodePoint(Number(n)) : '');
   const paragraphs = text.split(/\n\s*\n/).map(p => p.trim()).filter(p => {
     return p.length >= 60 && !/^(#{1,6}\s|\[.*\]:|\||```|[-*]\s|\d+\.\s)/.test(p)
       && !/^(?:table of contents|目录|badges|sponsors|languages?|copyright)\b/i.test(p)

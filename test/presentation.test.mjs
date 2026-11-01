@@ -23,3 +23,9 @@ test('卡片将项目与 README 视为纯文本，不执行仓库中的 HTML', (
   assert.match(html, /增长数据正在积累/);
   assert.match(html, /data-tab=/);
 });
+test('README 跳过 HTML 导航栏并清理实体', () => {
+  const raw = '<p><a href="a">What is awesome?</a>&nbsp;&nbsp;&nbsp;<a href="b">Contribution guide</a>&nbsp;&nbsp;&nbsp;<a href="c">Subscribe</a></p>\n\nThis project builds embedded Linux firmware &amp; helps hardware developers support Rockchip and Allwinner devices with clear documentation and reproducible workflows.';
+  const text = readmeExcerpt(raw);
+  assert.match(text, /^This project builds/);
+  assert.ok(!text.includes('&amp;') && !text.includes('&nbsp;'));
+});

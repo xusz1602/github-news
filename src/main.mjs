@@ -168,7 +168,7 @@ async function preview() {
     for (const repo of projects.values()) {
       if (attempted.has(repo.id)) continue;
       attempted.add(repo.id);
-      if (cache[repo.id]?.fetchedAt && Date.now() - Date.parse(cache[repo.id].fetchedAt) < 30 * 86400000) continue;
+      if (cache[repo.id]?.extractorVersion === 2 && cache[repo.id]?.fetchedAt && Date.now() - Date.parse(cache[repo.id].fetchedAt) < 30 * 86400000) continue;
       progress(`补充 README：${repo.full_name}`);
       try {
         const response = await fetch(`https://api.github.com/repos/${repo.full_name}/readme`, {
@@ -178,7 +178,7 @@ async function preview() {
         if (!response.ok) { progress(`README HTTP ${response.status}：保留已有简介并提供原文入口`); continue; }
         const value = await response.json();
         if (value.encoding !== 'base64' || !value.content) continue;
-        cache[repo.id] = { excerpt: readmeExcerpt(Buffer.from(value.content, 'base64').toString('utf8')), fetchedAt: new Date().toISOString(), repository: repo.full_name };
+        cache[repo.id] = { extractorVersion: 2, excerpt: readmeExcerpt(Buffer.from(value.content, 'base64').toString('utf8')), fetchedAt: new Date().toISOString(), repository: repo.full_name };
       } catch { progress('README 暂时无法读取：保留原文入口，不影响榜单发布'); }
     }
     await writeFile(join(docs, `${id}.html`), renderHTML(period, end, start, config, cache));
