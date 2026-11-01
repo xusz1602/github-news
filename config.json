@@ -1,0 +1,22 @@
+{
+  "timezone": "Asia/Shanghai",
+  "top": 10,
+  "globalPages": 10,
+  "embeddedPages": 2,
+  "minimumGrowthStars": 20,
+  "queries": [
+    "topic:embedded", "topic:embedded-linux", "topic:firmware",
+    "topic:stm32", "topic:esp32", "topic:rtos", "topic:risc-v",
+    "allwinner in:name,description", "sunxi in:name,description",
+    "rockchip in:name,description", "rk3588 in:name,description",
+    "rk3568 in:name,description", "rv1106 in:name,description",
+    "amlogic in:name,description", "buildroot in:name,description",
+    "yocto in:name,description", "u-boot in:name,description",
+    "armbian in:name,description", "openwrt in:name,description",
+    "topic:zephyr", "topic:freertos", "rt-thread in:name,description",
+    "topic:device-tree", "topic:linux-driver", "topic:orangepi",
+    "topic:radxa", "topic:bananapi", "topic:micropython"
+  ],
+  "include": ["torvalds/linux", "u-boot/u-boot", "buildroot/buildroot", "zephyrproject-rtos/zephyr", "RT-Thread/rt-thread"],
+  "exclude": []
+}

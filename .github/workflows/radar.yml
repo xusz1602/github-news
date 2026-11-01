@@ -1,0 +1,67 @@
+name: GitHub Embedded Radar
+on:
+  schedule:
+    - cron: '17 0 * * *'
+    - cron: '47 4 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'run：采集和报告；test-push：只测试微信连接'
+        type: choice
+        default: run
+        options: [run, test-push]
+
+permissions:
+  contents: write
+concurrency:
+  group: github-radar
+  cancel-in-progress: false
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify ranking logic
+        run: npm test
+      - name: Collect snapshots and generate reports
+        if: inputs.mode != 'test-push'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node src/main.mjs collect
+      - name: Persist snapshots before notification
+        if: inputs.mode != 'test-push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data reports
+          if ! git diff --cached --quiet; then
+            git commit -m "Update star snapshots and reports"
+            git push
+          fi
+      - name: Push reports to WeChat
+        if: inputs.mode != 'test-push'
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: node src/main.mjs send
+      - name: Test WeChat connection
+        if: inputs.mode == 'test-push'
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+        run: node src/main.mjs test-push
+      - name: Persist delivery receipt
+        if: always() && inputs.mode != 'test-push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data reports
+          if ! git diff --cached --quiet; then
+            git commit -m "Record notification acceptance"
+            git push
+          fi

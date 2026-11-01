@@ -1,0 +1,10 @@
+{
+  "name": "github-embedded-radar",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test"
+  }
+}
