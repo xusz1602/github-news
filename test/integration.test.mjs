@@ -27,6 +27,10 @@ globalThis.Date = class extends OriginalDate {
 globalThis.setTimeout = callback => { queueMicrotask(callback); return 0; };
 globalThis.fetch = async (input, options) => {
   const url = new URL(input);
+  if (process.env.RADAR_TEST_LIMIT === '1') {
+    appendFileSync(${JSON.stringify(join(dir, 'limit-count.txt'))}, 'request\\n');
+    return new Response('{}', { status: 403, headers: { 'retry-after': '3600' } });
+  }
   if (url.hostname === 'sctapi.ftqq.com') {
     appendFileSync(${JSON.stringify(join(dir, 'push-count.txt'))}, 'accepted\\n');
     return Response.json({code:0});
@@ -41,6 +45,13 @@ globalThis.fetch = async (input, options) => {
   throw new Error('Unexpected test endpoint');
 };
 `);
+    const limited = spawnSync(process.execPath, ['--import', pathToFileURL(join(dir, 'mock.mjs')).href, join(dir, 'src', 'main.mjs'), 'collect'], {
+      cwd: dir, encoding: 'utf8', env: { ...process.env, GITHUB_TOKEN: 'fixture', RADAR_TEST_LIMIT: '1' }
+    });
+    assert.equal(limited.status, 1);
+    assert.match(limited.stderr, /超过 30 秒/);
+    assert.equal(await readFile(join(dir, 'limit-count.txt'), 'utf8'), 'request\n');
+    await assert.rejects(readFile(join(dir, 'data', 'snapshots', '2026-11-02.json')), { code: 'ENOENT' });
     const run = phase => {
       const child = spawnSync(process.execPath, ['--import', pathToFileURL(join(dir, 'mock.mjs')).href, join(dir, 'src', 'main.mjs'), phase], {
         cwd: dir, encoding: 'utf8', env: { ...process.env, GITHUB_TOKEN: 'fixture', GITHUB_REPOSITORY: 'fixture/radar', SERVERCHAN_SENDKEY: 'SCTfixture' }

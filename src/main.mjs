@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, rename, readdir, unlink } from 'node:fs/pro
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dateAt, periods, shift, render } from './core.mjs';
+import { setTimeout as watchdogTimeout } from 'node:timers';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const config = JSON.parse(await readFile(join(root, 'config.json'), 'utf8'));
@@ -13,7 +14,15 @@ const token = process.env.GITHUB_TOKEN;
 const now = new Date();
 const today = dateAt(now, config.timezone);
 const phase = process.argv[2] || 'collect';
+const started = Date.now();
+// Independent of individual fetch/retry timers: always terminate a stuck collection.
+const watchdog = phase === 'collect' ? watchdogTimeout(() => {
+  console.error('采集超过 12 分钟总时限，已终止；本次不保存不完整快照。请查看最后一条查询进度。');
+  process.exit(1);
+}, 12 * 60 * 1000) : null;
+watchdog?.unref();
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const progress = message => console.log(`[${Math.round((Date.now() - started) / 1000)}s] ${message}`);
 
 async function readJSON(path, fallback) {
   try { return JSON.parse(await readFile(path, 'utf8')); }
@@ -25,17 +34,18 @@ async function save(path, obj) {
 }
 
 async function api(path, body) {
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     let response;
     try {
       response = await fetch(`https://api.github.com${path}`, {
         method: body ? 'POST' : 'GET',
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'github-embedded-radar',
           ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(60000)
+        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000)
       });
     } catch {
-      if (attempt === 3) throw new Error('GitHub 网络请求失败');
+      if (attempt === 2) throw new Error('GitHub 网络请求连续 3 次失败或超时；停止本次采集');
+      progress(`请求失败或超过 20 秒，准备第 ${attempt + 2}/3 次尝试`);
       await sleep(3000 * (attempt + 1)); continue;
     }
     if (response.ok) {
@@ -43,12 +53,15 @@ async function api(path, body) {
       if (result.errors) throw new Error('GitHub GraphQL 返回错误，停止写入不完整快照');
       return result;
     }
-    if (![403, 429, 500, 502, 503, 504].includes(response.status) || attempt === 3) {
+    if (![403, 429, 500, 502, 503, 504].includes(response.status) || attempt === 2) {
       throw new Error(`GitHub 请求失败 HTTP ${response.status}（未记录凭据或响应正文）`);
     }
     const retry = Number(response.headers.get('retry-after')) || 0;
     const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000 - Date.now();
-    await sleep(Math.min(65000, Math.max(5000 * (attempt + 1), retry * 1000, response.headers.get('x-ratelimit-remaining') === '0' ? reset + 1000 : 0)));
+    const delay = Math.max(5000 * (attempt + 1), retry * 1000, response.headers.get('x-ratelimit-remaining') === '0' ? reset + 1000 : 0);
+    if (delay > 30000) throw new Error(`GitHub HTTP ${response.status} 要求等待超过 30 秒，退出并等待下一次任务补跑`);
+    progress(`GitHub HTTP ${response.status}，等待 ${Math.ceil(delay / 1000)} 秒后重试 ${attempt + 2}/3`);
+    await sleep(delay);
   }
 }
 
@@ -68,6 +81,7 @@ async function collect() {
   const excludes = new Set(config.exclude.map(x => x.toLowerCase()));
   async function search(query, pages, embedded, forks = false) {
     for (let page = 1; page <= pages; page++) {
+      progress(`开始检索：${query}，第 ${page}/${pages} 页`);
       await sleep(token ? 2200 : 6500);
       const params = new URLSearchParams({ q: `${query} archived:false ${forks ? 'fork:true' : 'fork:false'}`, sort: 'stars', order: 'desc', per_page: '100', page: String(page) });
       let result = await api(`/search/repositories?${params}`);
@@ -80,6 +94,7 @@ async function collect() {
         const old = pool.get(r.node_id) || previous?.repos[r.node_id];
         pool.set(r.node_id, normalize(r, embedded || old?.embedded));
       }
+      progress(`完成检索：${query}，第 ${page} 页返回 ${result.items.length} 条，累计 ${pool.size} 个项目`);
       if (result.items.length < 100) break;
     }
   }
@@ -90,6 +105,7 @@ async function collect() {
   for (const query of config.queries) await search(`${query} stars:>=20`, config.embeddedPages, true, true);
   for (const fullName of config.include) {
     if (excludes.has(fullName.toLowerCase())) continue;
+    progress(`读取指定项目：${fullName}`);
     const r = await api(`/repos/${fullName}`);
     pool.set(r.node_id, normalize(r, true));
   }
@@ -98,6 +114,7 @@ async function collect() {
   console.log(`刷新历史项目 ${missing.length} 个……`);
   if (missing.length && !token) throw new Error('刷新历史项目需要 GITHUB_TOKEN；不保存部分快照');
   for (let i = 0; i < missing.length; i += 50) {
+    progress(`刷新历史项目：${i + 1}–${Math.min(i + 50, missing.length)}/${missing.length}`);
     const batch = missing.slice(i, i + 50);
     const result = await api('/graphql', { query: `query($ids:[ID!]!) { nodes(ids:$ids) { ... on Repository { id nameWithOwner stargazerCount description repositoryTopics(first:30) { nodes { topic { name } } } primaryLanguage { name } pushedAt isArchived isFork } } }`, variables: { ids: batch.map(r => r.id) } });
     for (const n of result.data.nodes) {
@@ -178,4 +195,6 @@ try {
   // Never log native fetch errors, which may include the secret-bearing URL.
   console.error(error.message?.includes('SCT') ? '请检查 SERVERCHAN_SENDKEY 的 Secrets 配置（Turbo SCT 类型）' : error.message);
   process.exitCode = 1;
+} finally {
+  if (watchdog) clearTimeout(watchdog);
 }
